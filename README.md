@@ -4,7 +4,7 @@ Simulation of a 5G base station serving several users with different channel qua
 
 Course project for Wireless Communications (UFSC).
 
-**Status:** planning. The channel model and statistics are reused from the single-user project; the multi-user simulator is not implemented yet. Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
+**Status:** in development. Done: reused channel model and statistics, and the multi-user cell model (`cell/cell.py`: users placed over an annulus, independent shadowing and fading per user, Shannon rate per slot). Next: traffic, scheduling policies, and metrics. Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
 
 ## Reused from the Single-User Project
 
