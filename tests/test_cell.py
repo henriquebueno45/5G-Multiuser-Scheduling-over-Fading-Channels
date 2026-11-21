@@ -48,3 +48,38 @@ def test_diversity_raises_mean_spectral_efficiency():
     c1 = generate_cell(2000, CellConfig(channel=ChannelConfig(antennas=1, speed_mps=30.0), **kw), 5)
     c4 = generate_cell(2000, CellConfig(channel=ChannelConfig(antennas=4, speed_mps=30.0), **kw), 5)
     assert c4.se.mean() > c1.se.mean()
+
+
+def test_static_spectral_efficiency_matches_hand_computed_link_budget():
+    # Link budget written out independently of the channel module: free-space loss at 1 m plus
+    # 10 n log10(d), thermal noise -174 dBm/Hz + 10 log10(B) + NF, Shannon rate capped at se_max
+    ch = ChannelConfig(fading=False, shadow_sigma_db=0.0)
+    cfg = CellConfig(n_users=5, channel=ch)
+    cell = generate_cell(3, cfg, seed=11)
+    for d, se in zip(cell.distance_m, cell.se[:, 0]):
+        pl = 20 * np.log10(4 * np.pi * 3.5e9 / 3e8) + 35.0 * np.log10(d)
+        noise = -174.0 + 10 * np.log10(360e3) + 7.0
+        snr = 10 ** ((23.0 - pl - noise) / 10)
+        assert abs(se - min(np.log2(1 + snr), 7.4)) < 1e-3
+
+
+def _ergodic_se(snr_db: float, antennas: int, se_max: float = 7.4) -> float:
+    """E[min(log2(1 + snr G), se_max)] for G ~ Gamma(L, 1) by numerical integration."""
+    from math import lgamma
+    g = np.linspace(1e-6, 60.0, 400_000)
+    pdf = np.exp((antennas - 1) * np.log(g) - g - lgamma(antennas))
+    f = np.minimum(np.log2(1 + 10 ** (snr_db / 10) * g), se_max)
+    return float(np.sum(f * pdf) * (g[1] - g[0]))
+
+
+def test_mean_spectral_efficiency_matches_rayleigh_theory():
+    # A fast-moving user in Rayleigh fading (L-branch MRC) has ergodic SE = E[log2(1 + snr G)]
+    for antennas in (1, 4):
+        ch = ChannelConfig(antennas=antennas, shadow_sigma_db=0.0, speed_mps=60.0)
+        cfg = CellConfig(n_users=1, r_min_m=150, r_max_m=150.001, channel=ch)
+        cell = generate_cell(300_000, cfg, seed=2)
+        snr_db = 23.0 - (20 * np.log10(4 * np.pi * 3.5e9 / 3e8)
+                         + 35.0 * np.log10(cell.distance_m[0])) - (-174.0 + 10 * np.log10(360e3)
+                                                                   + 7.0)
+        theory = _ergodic_se(snr_db, antennas)
+        assert abs(cell.se.mean() / theory - 1) < 0.03, (antennas, cell.se.mean(), theory)

@@ -21,7 +21,7 @@ from sim.run import POLICY_NAMES, simulate
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results"
-LOADS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0, 1.1, 1.2, 1.4, 1.6, 2.0]
+LOADS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0, 1.1, 1.2, 1.4, 1.6, 2.0, 2.5, 3.0]
 ANTENNAS = [1, 2, 4]
 KEY = ["policy", "load", "antennas", "seed"]
 

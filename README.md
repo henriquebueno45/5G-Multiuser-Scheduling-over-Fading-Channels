@@ -21,7 +21,7 @@ The channel is validated against theory (outage probability follows Gamma(L, 1) 
 
 ## Results
 
-Setup: one cell with 50 PRBs (360 kHz, 1 ms slots), 10 users uniform over 20-300 m (4 voice, 3 video, 3 data), Rayleigh fading with 1.5 m/s mobility, 10 s per run, 30 seeds, 95% bootstrap intervals. **Load 1 is the point where the offered bits would use every PRB** at each user's mean rate. A packet that cannot meet its deadline (voice 20 ms, video 50 ms, data 500 ms) is dropped. Policies: FIFO (oldest packet first, deadline drops only), FIFO with a 20 ms shared tail-drop buffer (`fifobuf`), strict priority (`prio`), DWRR with weights 8/4/2 (`dwrr`), and class-blind proportional fair (`pf`). Single receive antenna unless stated.
+Setup: one cell with 50 PRBs (360 kHz, 1 ms slots), 10 users uniform over 20-300 m (4 voice, 3 video, 3 data), Rayleigh fading with 1.5 m/s mobility, 10 s per run, 30 seeds, 95% bootstrap intervals (loads 0.2 to 3.0). **Load 1 is the point where the offered bits would use every PRB** at each user's mean rate. A packet that cannot meet its deadline (voice 20 ms, video 50 ms, data 500 ms) is dropped. Policies: FIFO (oldest packet first, deadline drops only), FIFO with a 20 ms shared tail-drop buffer (`fifobuf`), strict priority (`prio`), DWRR with weights 8/4/2 (`dwrr`), and class-blind proportional fair (`pf`). Single receive antenna unless stated.
 
 ### Who wins and who loses under congestion
 
@@ -44,19 +44,19 @@ Priority over FIFO at load 1.2, paired over seeds: voice -99.6 percentage points
 
 ### Load each class can carry (>= 99% delivered)
 
-Highest load at which the class still delivers 99% of its packets, one antenna. Voice values for priority, DWRR and PF are lower bounds (the load grid stops at 2.0).
+Highest load at which the class still delivers 99% of its packets, one antenna. Voice values for priority, DWRR and PF are lower bounds: most seeds never violate the 99% target up to the highest simulated load, 3.0.
 
 | Class | FIFO | FIFO + buffer | Priority | DWRR | PF |
 |---|---|---|---|---|---|
-| Voice | 0.30 | 0.30 | >= 1.97 | >= 1.93 | >= 1.85 |
-| Video | 0.57 | 0.54 | 1.17 | 0.89 | 0.79 |
-| Data | 1.69 | 0.80 | 0.73 | 0.92 | 1.26 |
+| Voice | 0.30 | 0.30 | >= 2.91 | >= 2.82 | >= 2.59 |
+| Video | 0.57 | 0.54 | 1.21 | 0.92 | 0.82 |
+| Data | 1.90 | 0.80 | 0.73 | 0.92 | 1.36 |
 
 ### Antenna diversity
 
 ![Effect of diversity](results/main_diversity.png)
 
-More receive antennas (MRC, L = 1, 2, 4) raise the load every class can carry, for every policy. Video capacity under priority goes from 1.17 to 1.70, and under FIFO from 0.57 to 0.93; voice under FIFO from 0.30 to 0.80. Diversity helps most the classes that were being hurt by deep fades. An exception: PF gets *worse* for video and data with more antennas (video loss at load 1.2 goes from 14.7% to 26.4%), because diversity flattens the fading peaks that PF exploits.
+More receive antennas (MRC, L = 1, 2, 4) raise the load that voice and video can carry under every policy. Video capacity under priority goes from 1.21 to 1.75, and under FIFO from 0.57 to 0.93; voice under FIFO from 0.30 to 0.80. Diversity helps most the classes that were being hurt by deep fades. An exception is PF, which gets *worse* for video and data with more antennas (video loss at load 1.2 goes from 14.7% to 26.4%, and its data capacity falls from 1.36 to about 1.1), because diversity flattens the fading peaks that PF exploits.
 
 ### Cell centre versus cell edge
 
@@ -79,7 +79,7 @@ One assumption was changed at a time (data deadline 100 ms / 2000 ms, voice dead
 - The traffic mix, deadlines and DWRR weights are modelling choices, not measured values; the sensitivity study shows which results depend on them.
 - Load 1 is relative to each seed's realisation, so it varies slightly between seeds.
 - Service spent on a packet that then misses its deadline is wasted, so goodput under overload is below the cell capacity.
-- Voice capacity of the protected policies is censored at load 2.0.
+- Voice capacity of the protected policies is censored at load 3.0 (it is a lower bound, because voice is a small share of the total traffic).
 
 Raw outputs: `results/main_*.csv` (summary, paired differences, capacity, edge/centre, fairness) and `results/sens_*.csv`.
 
