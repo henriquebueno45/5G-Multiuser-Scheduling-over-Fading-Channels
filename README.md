@@ -4,7 +4,7 @@ Simulation of a 5G base station serving several users with different channel qua
 
 Course project for Wireless Communications (UFSC).
 
-**Status:** simulator, experiments (policy x load x antenna diversity, 30 seeds), sensitivity study and tests are done. Still to do: validation against theory beyond the unit tests, and the written article. Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
+**Status:** simulator, experiments (policy x load x antenna diversity, 30 seeds), sensitivity study, imperfect-CSI study and tests are done. The article (Portuguese, 6 pages) is in `report/`; still to do: theory comparisons (multiuser diversity, M/G/1 priority queue). Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
 
 ## Reused from the Single-User Project
 
@@ -18,6 +18,66 @@ The channel model, its validation, and the statistics helpers come from [Traffic
 | `channel/calibration.py` | `equal_mean_distance` from `analysis/experiments.py` |
 
 The channel is validated against theory (outage probability follows Gamma(L, 1) within 0.02 decades for P > 1e-3; level-crossing rate within 2% of Clarke's formula): see `results/outage_validation.png` and `results/channel_validation.png`. The real-time C/Pthreads core from the original project is deliberately not reused.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph L1["Channel layer"]
+        CH["channel/channel_model.py<br/>path loss + shadowing + Jakes fading + MRC → SE per PRB"]
+    end
+    subgraph L2["Cell layer: cell/cell.py"]
+        PL["place_users<br/>annulus 20–300 m"]
+        GC["generate_cell<br/>bits_per_prb[user, slot], per-user RNG streams"]
+    end
+    subgraph L3["Simulation layer: sim/"]
+        TR["traffic.py<br/>voice / video / data arrivals, saturation scale"]
+        CSI["run.py: simulate()<br/>optional CQI delay + back-off → rate_est"]
+        ENG["engine.py: run()<br/>slot loop: arrivals → deadline drops → allocate → serve"]
+        POL["policies.py<br/>FIFO · fifobuf · Priority · DWRR · PF"]
+        MET["metrics.py<br/>loss, delay p95, jitter, throughput, starvation, Jain"]
+    end
+    subgraph L4["Experiment layer: analysis/"]
+        EXP["experiments.py<br/>policy × load × antennas × seed sweep"]
+        SENS["sensitivity.py<br/>one assumption at a time"]
+        CSIS["csi.py<br/>delay × back-off × speed"]
+        REP["report.py · stats.py<br/>bootstrap CIs, paired diffs, capacity, plots"]
+    end
+    OUT[("results/*.csv, *.png")]
+
+    CH --> GC
+    PL --> GC
+    GC -- "true rates" --> ENG
+    GC -- "SE history" --> CSI
+    CSI -- "rate_est" --> ENG
+    TR -- "packets" --> ENG
+    ENG <-- "allocate(n_prbs, SlotState) / update(served)" --> POL
+    ENG -- "SimResult" --> MET
+    MET --> EXP
+    MET --> SENS
+    MET --> CSIS
+    EXP --> OUT
+    SENS --> OUT
+    CSIS --> OUT
+    OUT --> REP
+    REP --> OUT
+```
+
+### Technical description
+
+The simulator is a slotted (1 ms) discrete-time model of one gNB downlink, in four layers that only depend downwards. A run is fully determined by `(policy, load, seed, antennas, ...)`.
+
+1. **Channel layer** (`channel/channel_model.py`, reused from the single-user project). For one user it generates the spectral efficiency per PRB over time: log-distance path loss, static log-normal shadowing, Rayleigh fading from a sum-of-sinusoids Jakes model (32 paths, Doppler from the speed) and MRC over `L` antennas (a Gamma(`L`, 1) gain). The result is `min(log2(1 + SNR), 7.4)`.
+2. **Cell layer** (`cell/cell.py`). `generate_cell` draws the user positions (uniform in area over a 20–300 m annulus) and one channel per user, each from its own `SeedSequence.spawn` stream so that a user's channel does not depend on how many other users exist. It returns a `CellRealization` with `bits_per_prb[user, slot]` (SE × 360 kHz × 1 ms), the SE and the distances.
+3. **Simulation layer** (`sim/`).
+   - `traffic.py` builds per-user packet arrivals (voice and video periodic, data Poisson) and a *saturation scale* so that load 1 fills the 50 PRBs at the realisation's mean rates.
+   - `engine.run` is the slot loop. Each slot it (i) enqueues arrivals (tail drop if a shared buffer is set), (ii) drops head-of-line packets past their deadline, (iii) builds a `SlotState` (backlog, head-of-line arrival, bits per PRB, class) and asks the policy for a PRB allocation, (iv) serves each user's queue, fragmenting packets across slots, and (v) records the PRBs per class and the backlog. With `rate_est` set, the policy and the transmitter use the estimated rate and a transmission fails (PRBs wasted, bits stay queued) when the true rate is lower.
+   - `policies.py` defines the `Policy` interface (`allocate`, `update`) and its implementations. A new policy only needs to implement `allocate` and be added to the `POLICIES` registry; the engine never looks inside it.
+   - `run.simulate` wires it all together, builds `rate_est` from a delayed SE and a back-off, and holds the variant registry (`fifobuf`), the DWRR weights, deadline and buffer overrides and the CLI.
+   - `metrics.py` turns the `SimResult` into per-class and per-user tables (the first 1,000 and last 500 slots are excluded).
+4. **Experiment layer** (`analysis/`). `experiments.py`, `sensitivity.py` and `csi.py` are resumable sweeps over a `multiprocessing.Pool`: every `(configuration, seed)` job is independent and appends its rows to a CSV, keyed so completed jobs are skipped on restart. `report.py` and `stats.py` read the CSVs and produce bootstrap confidence intervals, paired differences, SLA capacity, edge/centre and fairness tables and the plots in `results/`.
+
+Design choices: all randomness derives from the seed (runs are reproducible and policies are compared on identical channels and traffic, which makes the paired differences valid); the channel and the engine are decoupled by the `bits_per_prb` array, so another channel model can be plugged in without touching the scheduler; and the tests (`tests/`) check each layer separately (channel statistics, link budget, policy invariants, an exact queue recursion, the saturation bound).
 
 ## Results
 
