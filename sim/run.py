@@ -28,8 +28,13 @@ POLICY_NAMES = sorted(POLICIES) + sorted(VARIANTS)
 def simulate(policy: str, load: float, seed: int, antennas: int = 1, mix=(4, 3, 3),
              duration_s: float = 10.0, cfg: CellConfig | None = None, speed_mps: float = 1.5,
              dwrr_weights=(8, 4, 2), deadline_slots: dict | None = None,
-             buffer_ms: float | None = None):
-    """Return (per-class metrics, per-user metrics, SimResult) for one run."""
+             buffer_ms: float | None = None, cqi_delay_slots: int = 0, backoff_db: float = 0.0):
+    """Return (per-class metrics, per-user metrics, SimResult) for one run.
+
+    With `cqi_delay_slots > 0` or `backoff_db > 0` the base station knows the channel only through
+    a delayed report: it schedules and transmits at the rate of the reported spectral efficiency
+    reduced by `backoff_db`, and a transmission fails if the true channel is worse (see `run`).
+    """
     base_policy, variant_buffer = VARIANTS.get(policy, (policy, None))
     buffer_ms = buffer_ms if buffer_ms is not None else variant_buffer
     n_slots = int(duration_s * 1000)
@@ -40,10 +45,18 @@ def simulate(policy: str, load: float, seed: int, antennas: int = 1, mix=(4, 3, 
     classes = assign_classes(*mix)
     scale = saturation_scale(classes, cell.bits_per_prb.mean(axis=1), cfg.n_prbs)
     arrivals = generate_arrivals(n_slots, classes, scale, load, seed)
+    rate_est = None
+    if cqi_delay_slots > 0 or backoff_db > 0:
+        se = cell.se
+        if cqi_delay_slots > 0:
+            se = np.concatenate([se[:, :1].repeat(cqi_delay_slots, axis=1),
+                                 se[:, :-cqi_delay_slots]], axis=1)
+        snr = (2.0 ** se - 1.0) / 10 ** (backoff_db / 10)
+        rate_est = np.log2(1 + snr) * cfg.channel.prb_bw_hz * cfg.channel.slot_s
     pol = POLICIES[base_policy](dwrr_weights) if base_policy == "dwrr" else POLICIES[base_policy]()
     buffer_bits = (None if buffer_ms is None
                    else buffer_ms * cfg.n_prbs * float(cell.bits_per_prb.mean()))
-    res = run(cell, classes, arrivals, pol, cfg.n_prbs, buffer_bits, deadline_slots)
+    res = run(cell, classes, arrivals, pol, cfg.n_prbs, buffer_bits, deadline_slots, rate_est)
     return per_class(res), per_user(res, cell.distance_m), res
 
 

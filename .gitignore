@@ -8,3 +8,14 @@ results/exp/tmp/
 results/run.csv*
 results/t.csv*
 results/trace.csv
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.bbl
+report/*.blg
+report/*.fls
+report/*.fdb_latexmk
+report/*.lof
+report/*.lot
+report/sections/*.aux

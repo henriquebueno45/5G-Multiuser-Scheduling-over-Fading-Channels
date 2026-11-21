@@ -74,6 +74,18 @@ One assumption was changed at a time (data deadline 100 ms / 2000 ms, voice dead
 - **FIFO has no good operating point.** Shrinking its buffer to 5 ms protects voice (14% loss) but loses 78% of video and 21% of data; a 100 ms buffer loses 99% of voice. A single FIFO number would be misleading, so both variants are reported.
 - **DWRR is a dial, not a single result.** With weights 16/4/1 data loses 57% and video 9.5%; with equal weights video loses 35% and data 27%.
 
+### Do the conclusions survive imperfect channel knowledge?
+
+![Imperfect CSI](results/csi_loss.png)
+
+The base station is given a CQI report that is 5 or 10 ms old and transmits at that rate minus a back-off (0, 3 or 6 dB). If the true channel is worse, the transmission fails: the PRBs are wasted and the data is sent again. 20 seeds, speeds 1.5 and 15 m/s, loads 0.8 and 1.2, 1 and 4 antennas (`analysis/csi.py`).
+
+- **Policy ranking survives.** Priority, DWRR and PF still protect voice (below about 11% loss at load 1.2, below 2% with a 3 dB back-off); FIFO and FIFO with a buffer still lose almost all voice. Priority is still the best for video and still starves data (97-99% loss).
+- **Everything loses capacity.** At load 0.8 with a 5 ms delay and 3 dB back-off, video loss at 1.5 m/s goes from 3% to 31% (DWRR) and 17% (priority) and data loss from about 0% to 55% (DWRR) and 87% (priority), so load 0.8 is no longer below capacity.
+- **PF is the most sensitive to speed.** It picks users at their fading peaks, which a stale report overestimates: its block error rate is 0.32-0.71 at 15 m/s against 0.19 for the others, and its video loss at load 0.8 is 52% (priority: 26%).
+- **A moderate back-off is best.** At 1.5 m/s 3 dB beats 6 dB and 0 dB.
+- This model is harsher than a real link (no outer-loop adaptation to a 10% error target, no HARQ combining); read it as the direction of the effect, not its size.
+
 ### Limitations
 
 - The traffic mix, deadlines and DWRR weights are modelling choices, not measured values; the sensitivity study shows which results depend on them.
@@ -100,6 +112,8 @@ python -m analysis.experiments --name main --seeds 30 --workers 6   # about 15 m
 python -m analysis.report --name main                                # tables and plots
 python -m analysis.sensitivity run --seeds 20 --workers 6            # about 15 min, resumable
 python -m analysis.sensitivity report
+python -m analysis.csi run --seeds 20 --workers 6                    # about 25 min, resumable
+python -m analysis.csi report --load 1.2 --antennas 1                # also try --load 0.8
 ```
 
 ## License

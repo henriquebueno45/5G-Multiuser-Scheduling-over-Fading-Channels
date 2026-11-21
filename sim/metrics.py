@@ -6,6 +6,7 @@ longest deadline so no counted packet is still pending). Definitions:
     delay       mean and 95th percentile of delivered packets, in ms (1 slot = 1 ms)
     jitter      mean |delay_i - delay_(i-1)| over consecutive delivered packets of the same user
     throughput  delivered bits per second
+    bler        share of transmissions lost to imperfect channel knowledge (0 if perfect CSI)
     starvation  fraction of slots with queued data but zero PRBs for the class, and the longest
                 such run in ms
 """
@@ -59,6 +60,7 @@ def per_class(res: SimResult, warmup: int = 1000, tail: int = 500) -> pd.DataFra
             "throughput_mbps": float(d.bits.sum() / secs / 1e6),
             "starved_frac": float(starved.sum() / max(bl.sum(), 1)),
             "max_starve_ms": float(_longest_run(starved) * SLOT_MS),
+            "bler": res.tx_failed / res.tx_total if res.tx_total else 0.0,
         })
     return pd.DataFrame(rows)
 

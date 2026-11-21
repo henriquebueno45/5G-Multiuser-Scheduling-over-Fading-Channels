@@ -153,3 +153,34 @@ def test_static_saturation_bound_and_work_conservation():
         # Work-conserving: nearly every PRB is used (goodput is lower because service spent on
         # packets that later miss their deadline is wasted)
         assert res.prbs.sum() >= 0.98 * n * n_prbs, name
+
+
+def test_imperfect_csi_failure_and_rate_selection():
+    cell = _const_cell(1, 40, 100)
+    arr = [Arrivals(np.array([0]), np.array([300.0]))]
+    cls = np.array([0])
+    # Conservative estimate: transmit at 50 bits/PRB, so 300 bits need 6 slots of 1 PRB
+    low = run(cell, cls, arr, POLICIES["prio"](), 1, rate_est=np.full((1, 40), 50.0))
+    assert low.packets.iloc[0].delay_slots == 6 and low.tx_failed == 0
+    # Optimistic estimate: the true channel is worse, every transmission fails, packet times out
+    high = run(cell, cls, arr, POLICIES["prio"](), 1, rate_est=np.full((1, 40), 200.0))
+    assert high.packets.iloc[0].status == "dropped" and high.tx_failed == high.tx_total > 0
+
+
+def test_perfect_estimate_reproduces_the_perfect_csi_run():
+    classes = assign_classes(4, 3, 3)
+    arr = generate_arrivals(3000, classes, 100.0, 1.2, seed=2)
+    cell = generate_cell(3000, CellConfig(n_users=10), seed=2)
+    a = run(cell, classes, arr, POLICIES["pf"](), 50)
+    b = run(cell, classes, arr, POLICIES["pf"](), 50, rate_est=cell.bits_per_prb.copy())
+    assert a.packets.equals(b.packets) and b.tx_failed == 0
+
+
+def test_stale_csi_causes_errors_and_backoff_removes_them():
+    def bler(**kw):
+        pc, _, _ = simulate("pf", 1.0, 1, duration_s=4, speed_mps=15.0, **kw)
+        return pc.bler.iloc[0]
+    assert bler(cqi_delay_slots=0, backoff_db=0.0) == 0.0
+    assert bler(cqi_delay_slots=0, backoff_db=3.0) == 0.0
+    stale, safe = bler(cqi_delay_slots=5), bler(cqi_delay_slots=5, backoff_db=6.0)
+    assert stale > 0.2 and safe < stale

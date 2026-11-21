@@ -25,13 +25,19 @@ class SimResult:
     prbs: np.ndarray  # (n_classes, n_slots) PRBs the class received
     user_class: np.ndarray
     n_slots: int
+    tx_total: int = 0  # transmissions (user-slots with PRBs) when link adaptation is modelled
+    tx_failed: int = 0  # transmissions lost because the channel was worse than the chosen rate
 
 
 def run(cell: CellRealization, user_class: np.ndarray, arrivals: list[Arrivals], policy: Policy,
         n_prbs: int, buffer_bits: float | None = None,
-        deadline_slots: dict[str, int] | None = None) -> SimResult:
+        deadline_slots: dict[str, int] | None = None,
+        rate_est: np.ndarray | None = None) -> SimResult:
     """Simulate the cell. `buffer_bits` adds a shared tail-drop buffer (an arriving packet is
-    dropped if the total backlog would exceed it); `deadline_slots` overrides class deadlines."""
+    dropped if the total backlog would exceed it); `deadline_slots` overrides class deadlines.
+    `rate_est[u, t]` (bits per PRB) models imperfect channel knowledge: the scheduler and the
+    transmitter use it, and a transmission fails (PRBs wasted, bits stay queued, i.e. a plain
+    retransmission) when the true rate `cell.bits_per_prb[u, t]` is below it."""
     n_users, n_slots = cell.bits_per_prb.shape
     n_cls = len(CLASSES)
     dl = {k: v.deadline_slots for k, v in PROFILES.items()} | (deadline_slots or {})
@@ -42,6 +48,7 @@ def run(cell: CellRealization, user_class: np.ndarray, arrivals: list[Arrivals],
     backlogged = np.zeros((n_cls, n_slots), dtype=bool)
     prbs_cls = np.zeros((n_cls, n_slots), dtype=int)
     queue_bits = np.zeros(n_users)
+    tx_total = tx_failed = 0
 
     for t in range(n_slots):
         for u in range(n_users):
@@ -61,7 +68,8 @@ def run(cell: CellRealization, user_class: np.ndarray, arrivals: list[Arrivals],
             if not q:
                 queue_bits[u] = 0.0  # clear floating-point residue
         hol = np.array([q[0][0] if q else np.inf for q in queues])
-        bpp = cell.bits_per_prb[:, t]
+        true_bpp = cell.bits_per_prb[:, t]
+        bpp = true_bpp if rate_est is None else rate_est[:, t]
         st = SlotState(queue_bits.copy(), hol, bpp, user_class)
         for c in range(n_cls):
             backlogged[c, t] = bool((queue_bits[user_class == c] > 0).any())
@@ -70,6 +78,11 @@ def run(cell: CellRealization, user_class: np.ndarray, arrivals: list[Arrivals],
         for u in np.flatnonzero(alloc):
             q, cap = queues[u], alloc[u] * bpp[u]
             prbs_cls[user_class[u], t] += alloc[u]
+            if rate_est is not None:
+                tx_total += 1
+                if true_bpp[u] < bpp[u] - 1e-9:
+                    tx_failed += 1
+                    continue
             while q and cap > 0:
                 p = q[0]
                 take = min(cap, p[1])
@@ -88,4 +101,4 @@ def run(cell: CellRealization, user_class: np.ndarray, arrivals: list[Arrivals],
         for p in queues[u]:
             records.append((u, user_class[u], p[0], p[2], np.nan, "pending"))
     df = pd.DataFrame(records, columns=["user", "cls", "arrival", "bits", "delay_slots", "status"])
-    return SimResult(df, backlogged, prbs_cls, user_class, n_slots)
+    return SimResult(df, backlogged, prbs_cls, user_class, n_slots, tx_total, tx_failed)
