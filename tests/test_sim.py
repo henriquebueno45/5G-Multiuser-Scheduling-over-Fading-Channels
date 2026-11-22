@@ -114,6 +114,39 @@ def test_shared_buffer_tail_drops_all_classes_alike():
     assert buf.loc["data", "loss"] > old.loc["data", "loss"]
 
 
+def test_hierarchical_slice_scheduler_intra_and_inter_slice():
+    # 2 voice users (class 0), 2 data users (class 2)
+    # Voice should be served oldest-first within voice slice;
+    # Data should be served Proportional Fair (better channel first) within data slice.
+    from sim.policies import HierarchicalSliceScheduler
+    sliced = HierarchicalSliceScheduler(weights=(10, 5, 5))
+    classes = np.array([0, 0, 2, 2])
+    # Users:
+    # 0 (voice): backlog 500 bits, hol 10, rate 100
+    # 1 (voice): backlog 500 bits, hol 5 (older!), rate 100
+    # 2 (data): backlog 1000 bits, hol 0, rate 100
+    # 3 (data): backlog 1000 bits, hol 0, rate 300 (better channel!)
+    st = SlotState(
+        queue_bits=np.array([500.0, 500.0, 1000.0, 1000.0]),
+        hol_arrival=np.array([10.0, 5.0, 0.0, 0.0]),
+        bits_per_prb=np.array([100.0, 100.0, 100.0, 300.0]),
+        user_class=classes,
+    )
+    # When budget is tight (12 PRBs total):
+    # Voice slice (10 PRB need) gets 10 PRBs: user 1 gets 5, user 0 gets 5.
+    # Data slice gets remaining 2 PRBs: user 3 (rate 300) gets 2 PRBs, user 2 (rate 100) gets 0 PRBs.
+    alloc_tight = sliced.allocate(12, st)
+    assert alloc_tight[1] == 5
+    assert alloc_tight[0] == 5
+    assert alloc_tight[3] == 2
+    assert alloc_tight[2] == 0
+
+    # With full budget (50 PRBs), all queues are emptied (work-conserving)
+    alloc_full = sliced.allocate(50, st)
+    assert alloc_full.sum() == st.need.sum()
+    assert (alloc_full == st.need).all()
+
+
 def test_buffer_never_exceeded():
     cell = _const_cell(1, 50, 100)
     arr = [Arrivals(np.array([0, 0, 0]), np.array([300.0, 300.0, 300.0]))]

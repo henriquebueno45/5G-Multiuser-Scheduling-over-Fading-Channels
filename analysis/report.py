@@ -23,7 +23,7 @@ from sim.metrics import jain  # noqa: E402
 CLASSES = ["voice", "video", "data"]
 METRICS = ["loss", "delay_p95_ms", "jitter_ms", "throughput_mbps", "starved_frac"]
 COLORS = {"fifo": "tab:red", "prio": "tab:blue", "dwrr": "tab:green", "pf": "tab:purple",
-          "fifobuf": "tab:orange"}
+          "fifobuf": "tab:orange", "sliced": "tab:cyan"}
 EDGE_M, CENTRE_M = 200.0, 100.0
 
 
@@ -186,7 +186,8 @@ def main() -> None:
     s = summary(dc)
     s.to_csv(RESULTS / f"{a.name}_summary.csv", index=False)
     pairs = [("prio", "fifo"), ("dwrr", "fifo"), ("dwrr", "prio"), ("pf", "fifo"),
-             ("fifobuf", "fifo"), ("prio", "fifobuf"), ("dwrr", "fifobuf")]
+             ("fifobuf", "fifo"), ("prio", "fifobuf"), ("dwrr", "fifobuf"),
+             ("sliced", "dwrr"), ("sliced", "fifo"), ("sliced", "prio")]
     paired(dc, pairs).to_csv(RESULTS / f"{a.name}_paired.csv", index=False)
     capacity(dc).to_csv(RESULTS / f"{a.name}_capacity.csv", index=False)
     e = edge_centre(du)

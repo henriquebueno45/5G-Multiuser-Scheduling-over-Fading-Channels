@@ -10,7 +10,7 @@ import pandas as pd  # noqa: E402
 from analysis.experiments import RESULTS  # noqa: E402
 
 COLORS = {"fifo": "tab:red", "fifobuf": "tab:orange", "prio": "tab:blue",
-          "dwrr": "tab:green", "pf": "tab:purple"}
+          "dwrr": "tab:green", "pf": "tab:purple", "sliced": "tab:cyan"}
 TITLES = {"voice": "Voz", "video": "Vídeo", "data": "Dados"}
 
 

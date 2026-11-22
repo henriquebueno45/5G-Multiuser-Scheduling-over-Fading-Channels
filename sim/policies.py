@@ -146,4 +146,75 @@ class ProportionalFair(Policy):
             self.avg = (1 - self.beta) * self.avg + self.beta * served_bits
 
 
-POLICIES = {"fifo": FIFO, "prio": StrictPriority, "dwrr": DWRR, "pf": ProportionalFair}
+class HierarchicalSliceScheduler(Policy):
+    """Hierarchical 5G Slice Scheduler:
+    Tier 1 (Inter-slice): DWRR across slices (Voice, Video, Data) enforcing SLA quotas and 0% starvation.
+    Tier 2 (Intra-slice): Voice served oldest-first (strict delay protection); video and data served
+    via Proportional Fair within each slice to harvest multi-user diversity.
+    """
+
+    name = "sliced"
+
+    def __init__(self, weights=(8, 4, 2), beta: float = 0.01):
+        self.quantum = np.asarray(weights, dtype=float)
+        self.deficit = np.zeros(len(CLASSES))
+        self.start = 0
+        self.beta = beta
+        self.avg: np.ndarray | None = None
+
+    def allocate(self, n_prbs, st):
+        if self.avg is None:
+            self.avg = np.ones(len(st.queue_bits))
+        alloc = np.zeros(len(st.queue_bits), dtype=int)
+        budget = n_prbs
+        need = st.need
+        members = [np.flatnonzero(st.user_class == c) for c in range(len(CLASSES))]
+
+        while budget > 0:
+            any_pending = False
+            for k in range(len(CLASSES)):
+                c = (self.start + k) % len(CLASSES)
+                pending = [u for u in members[c] if need[u] > alloc[u]]
+                if not pending:
+                    self.deficit[c] = 0.0
+                    continue
+                any_pending = True
+                self.deficit[c] += self.quantum[c]
+                grant = min(int(self.deficit[c]), budget)
+
+                # Tier 2: Intra-slice selection
+                if c == 0:
+                    # Voice: Delay-sensitive, oldest HOL packet first
+                    order = sorted(pending, key=lambda u: (st.hol_arrival[u], u))
+                else:
+                    # Video & Data: Opportunistic Proportional Fair within the slice
+                    order = sorted(
+                        pending,
+                        key=lambda u: (-st.bits_per_prb[u] / max(self.avg[u], 1e-6), u),
+                    )
+
+                left = _fill(order, need, grant, alloc)
+                used = grant - left
+                budget -= used
+                self.deficit[c] -= used
+                if all(need[u] <= alloc[u] for u in members[c]):
+                    self.deficit[c] = 0.0
+                if budget == 0:
+                    break
+            if not any_pending:
+                break
+        self.start = (self.start + 1) % len(CLASSES)
+        return alloc
+
+    def update(self, served_bits):
+        if self.avg is not None:
+            self.avg = (1 - self.beta) * self.avg + self.beta * served_bits
+
+
+POLICIES = {
+    "fifo": FIFO,
+    "prio": StrictPriority,
+    "dwrr": DWRR,
+    "pf": ProportionalFair,
+    "sliced": HierarchicalSliceScheduler,
+}

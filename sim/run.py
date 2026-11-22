@@ -53,7 +53,7 @@ def simulate(policy: str, load: float, seed: int, antennas: int = 1, mix=(4, 3, 
                                  se[:, :-cqi_delay_slots]], axis=1)
         snr = (2.0 ** se - 1.0) / 10 ** (backoff_db / 10)
         rate_est = np.log2(1 + snr) * cfg.channel.prb_bw_hz * cfg.channel.slot_s
-    pol = POLICIES[base_policy](dwrr_weights) if base_policy == "dwrr" else POLICIES[base_policy]()
+    pol = POLICIES[base_policy](dwrr_weights) if base_policy in ("dwrr", "sliced") else POLICIES[base_policy]()
     buffer_bits = (None if buffer_ms is None
                    else buffer_ms * cfg.n_prbs * float(cell.bits_per_prb.mean()))
     res = run(cell, classes, arrivals, pol, cfg.n_prbs, buffer_bits, deadline_slots, rate_est)

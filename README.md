@@ -34,7 +34,7 @@ flowchart LR
     subgraph SIM["2. Slotted Simulation (1 ms loop - sim/)"]
         direction TB
         ENG["Slot Engine (engine.py)<br/>Buffer, deadline drops,<br/>packet service & fragmentation"]
-        POL{{"Scheduling Policy (policies.py)<br/>FIFO, Priority, DWRR, PF<br/>(shares 50 PRBs)"}}
+        POL{{"Scheduling Policy (policies.py)<br/>FIFO, Priority, DWRR, PF, Sliced<br/>(shares 50 PRBs)"}}
         ENG -- "backlog, rates" --> POL
         POL -- "PRB allocation" --> ENG
     end
@@ -80,7 +80,7 @@ The simulator is a slotted (1 ms) discrete-time model of one gNB downlink, in fo
 3. **Simulation layer** (`sim/`).
    - `traffic.py` builds per-user packet arrivals (voice and video periodic, data Poisson) and a *saturation scale* so that load 1 fills the 50 PRBs at the realisation's mean rates.
    - `engine.run` is the slot loop. Each slot it (i) enqueues arrivals (tail drop if a shared buffer is set), (ii) drops head-of-line packets past their deadline, (iii) builds a `SlotState` (backlog, head-of-line arrival, bits per PRB, class) and asks the policy for a PRB allocation, (iv) serves each user's queue, fragmenting packets across slots, and (v) records the PRBs per class and the backlog. With `rate_est` set, the policy and the transmitter use the estimated rate and a transmission fails (PRBs wasted, bits stay queued) when the true rate is lower.
-   - `policies.py` defines the `Policy` interface (`allocate`, `update`) and its implementations. A new policy only needs to implement `allocate` and be added to the `POLICIES` registry; the engine never looks inside it.
+   - `policies.py` defines the `Policy` interface (`allocate`, `update`) and its implementations (FIFO, Strict Priority, DWRR, Proportional Fair, and the 5G Hierarchical Slice Scheduler `sliced`). A new policy only needs to implement `allocate` and be added to the `POLICIES` registry; the engine never looks inside it.
    - `run.simulate` wires it all together, builds `rate_est` from a delayed SE and a back-off, and holds the variant registry (`fifobuf`), the DWRR weights, deadline and buffer overrides and the CLI.
    - `metrics.py` turns the `SimResult` into per-class and per-user tables (the first 1,000 and last 500 slots are excluded).
 4. **Experiment layer** (`analysis/`). `experiments.py`, `sensitivity.py` and `csi.py` are resumable sweeps over a `multiprocessing.Pool`: every `(configuration, seed)` job is independent and appends its rows to a CSV, keyed so completed jobs are skipped on restart. `report.py` and `stats.py` read the CSVs and produce bootstrap confidence intervals, paired differences, SLA capacity, edge/centre and fairness tables and the plots in `results/`.

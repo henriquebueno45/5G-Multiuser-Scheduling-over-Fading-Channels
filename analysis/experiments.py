@@ -41,6 +41,9 @@ def _done(path: Path) -> set:
 
 
 def _append(df: pd.DataFrame, path: Path) -> None:
+    if path.exists():
+        cols = pd.read_csv(path, nrows=0).columns.tolist()
+        df = df[[c for c in cols if c in df.columns]]
     df.to_csv(path, mode="a", header=not path.exists(), index=False)
 
 
