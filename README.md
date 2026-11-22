@@ -4,7 +4,7 @@ Simulation of a 5G base station (gNB) downlink serving multiple network slices w
 
 Course project for Wireless Communications (UFSC).
 
-**Status:** Simulator, Monte Carlo experiments (6 policies $\times$ 13 loads $\times$ 3 antenna configs $\times$ 30 seeds = 7,020 runs), sensitivity sweep, imperfect-CSI study, and full test suite (33 passing unit tests) are complete. The final article (Portuguese, strictly 6 pages in ABNT `abntex2` format) is located in `report/main.pdf` (and ready for Overleaf in `report/overleaf_project.zip`). Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
+**Status:** Simulator, Monte Carlo experiments (6 policies $\times$ 13 loads $\times$ 3 antenna configs $\times$ 30 seeds = 7,020 runs), sensitivity sweep, imperfect-CSI study, and full test suite (33 passing unit tests) are complete.
 
 ## Reused from the Single-User Project
 
@@ -72,7 +72,7 @@ flowchart LR
    - **eMBB GBR (SST 1, 5QI 2/3):** Periodic 66,000 bits every 33 ms, PDB = 50 ms.
    - **eMBB non-GBR (SST 1, 5QI 8/9):** Poisson 2 Mbit/s (12,000 bit packets), PDB = 500 ms.
 2. **1 ms Slotted MAC Simulation:** In every 1 ms slot, the **slot engine** (`sim/engine.py`) enqueues arrivals, drops head-of-line packets that violate their PDB deadline (or tail drops on buffer overflow), and invokes the **scheduling policy** (`sim/policies.py`) to distribute the 50 PRB budget. Under imperfect CSI, transmissions fail (BLER, PRBs wasted, bits stay queued) if the true channel rate is below the delayed CQI estimate.
-3. **Analysis & Reports:** After discarding warmup (1,000 slots) and tail (500 slots), multi-run sweeps (`analysis/`) compute metrics with 95% bootstrap confidence intervals and paired comparisons, generating publication-ready figures and summary CSVs in `results/` and `report/figures/`.
+3. **Analysis & Reports:** After discarding warmup (1,000 slots) and tail (500 slots), multi-run sweeps (`analysis/`) compute metrics with 95% bootstrap confidence intervals and paired comparisons, generating publication-ready figures in `results/`.
 
 ---
 
@@ -195,12 +195,6 @@ PYTHONPATH=. python -m analysis.article_figs
 PYTHONPATH=. python -m analysis.csi run --seeds 20 --workers 6
 PYTHONPATH=. python -m analysis.csi report --load 0.8 --antennas 1
 ```
-
-## Overleaf Article
-
-The complete academic paper formatted in ABNT (`abntex2`, strictly 6 pages in Portuguese) is ready for Overleaf:
-- Source: [report/main.tex](report/main.tex)
-- Ready-to-upload archive: **[report/overleaf_project.zip](report/overleaf_project.zip)** (contains `main.tex`, `references.bib`, and all generated figures in `figures/`).
 
 ## License
 
