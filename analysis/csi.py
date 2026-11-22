@@ -27,7 +27,7 @@ from analysis.experiments import RESULTS  # noqa: E402
 from analysis.stats import boot_ci  # noqa: E402
 from sim.run import simulate  # noqa: E402
 
-POLICIES = ["fifo", "fifobuf", "prio", "dwrr", "pf"]
+POLICIES = ["fifo", "fifobuf", "prio", "dwrr", "pf", "sliced"]
 LOADS = [0.8, 1.2]
 ANTENNAS = [1, 4]
 SPEEDS = [1.5, 15.0]  # m/s: pedestrian and vehicular
@@ -60,8 +60,82 @@ def run_sweep(seeds: int, duration: float, workers: int) -> None:
     with Pool(workers) as pool:
         for i, df in enumerate(pool.imap_unordered(_job, jobs, chunksize=1), 1):
             df.to_csv(path, mode="a", header=not path.exists(), index=False)
-            if i % 100 == 0 or i == len(jobs):
+            if i % 50 == 0 or i == len(jobs):
                 print(f"  {i}/{len(jobs)}", flush=True)
+
+
+def plot_csi_fig(sel: pd.DataFrame, lang: str = "pt", out_path: Path | str = None) -> None:
+    fig, axes = plt.subplots(len(CLASSES), len(SPEEDS), figsize=(11, 7.2), sharex=True, sharey="row")
+    colors = {
+        "fifo": "tab:red",
+        "fifobuf": "tab:orange",
+        "prio": "tab:blue",
+        "dwrr": "tab:green",
+        "pf": "tab:purple",
+        "sliced": "tab:cyan",
+    }
+    if lang == "pt":
+        labels_map = {
+            "fifo": "FIFO", "fifobuf": "FIFO Tail-Drop", "prio": "Prioridade",
+            "dwrr": "DWRR", "pf": "PF", "sliced": "Hierárquico",
+        }
+        class_labels = {
+            "voice": "URLLC",
+            "video": "eMBB GBR",
+            "data": "eMBB non-GBR",
+        }
+        speed_fmt = lambda v: f"Velocidade: {str(v).replace('.', ',')} m/s"
+        ylabel_fmt = lambda c: f"Perda {class_labels[c]} (%)"
+        xlabel = "Qualidade da CSI (atraso CQI / margem de back-off)"
+        csi_ticks = ["Perfeito", "5 ms / 0 dB", "5 ms / 3 dB", "5 ms / 6 dB", "10 ms / 6 dB"]
+    else:
+        labels_map = {
+            "fifo": "FIFO", "fifobuf": "FIFO Tail-Drop", "prio": "Priority",
+            "dwrr": "DWRR", "pf": "PF", "sliced": "Hierarchical",
+        }
+        class_labels = {
+            "voice": "URLLC",
+            "video": "eMBB GBR",
+            "data": "eMBB non-GBR",
+        }
+        speed_fmt = lambda v: f"Speed: {v:g} m/s"
+        ylabel_fmt = lambda c: f"{class_labels[c]} Loss (%)"
+        xlabel = "Channel State Information (CQI delay / back-off margin)"
+        csi_ticks = ["Perfect", "5 ms / 0 dB", "5 ms / 3 dB", "5 ms / 6 dB", "10 ms / 6 dB"]
+
+    w = 0.13
+    handles = []
+    labels = []
+    for j, v in enumerate(SPEEDS):
+        for i, c in enumerate(CLASSES):
+            ax = axes[i, j]
+            for q, p in enumerate(POLICIES):
+                g = sel[(sel.speed == v) & (sel.policy == p) & (sel["class"] == c)]
+                g = g.set_index("csi").reindex(list(CSI))
+                loss_pct = g.loss * 100
+                yerr = [(g.loss - g.loss_lo) * 100, (g.loss_hi - g.loss) * 100]
+                bar = ax.bar(np.arange(len(CSI)) + (q - 2.5) * w, loss_pct, w,
+                             color=colors[p], label=labels_map[p],
+                             yerr=yerr, capsize=1.5)
+                if i == 0 and j == 0:
+                    handles.append(bar)
+                    labels.append(labels_map[p])
+            if i == 0:
+                ax.set_title(speed_fmt(v), fontsize=11, fontweight="bold", pad=8)
+            if j == 0:
+                ax.set_ylabel(ylabel_fmt(c), fontsize=10, fontweight="bold")
+            ax.grid(alpha=0.3, axis="y")
+            ax.set_ylim(-2, 105)
+            ax.set_yticks([0, 20, 40, 60, 80, 100])
+    for ax in axes[-1]:
+        ax.set_xticks(range(len(CSI)), csi_ticks, fontsize=9)
+        ax.set_xlabel(xlabel, fontsize=9.5, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98),
+               ncol=6, fontsize=9.5, frameon=True, edgecolor="#ccc", facecolor="white")
+    if out_path:
+        fig.savefig(out_path, dpi=140)
+    plt.close(fig)
 
 
 def report(load: float, antennas: int) -> None:
@@ -78,31 +152,10 @@ def report(load: float, antennas: int) -> None:
     s.to_csv(RESULTS / "csi_summary.csv", index=False)
     sel = s[(s.load == load) & (s.antennas == antennas)]
 
-    fig, axes = plt.subplots(len(CLASSES), len(SPEEDS), figsize=(13, 9), sharex=True, sharey="row")
-    colors = {"fifo": "tab:red", "fifobuf": "tab:orange", "prio": "tab:blue",
-              "dwrr": "tab:green", "pf": "tab:purple"}
-    w = 0.16
-    for j, v in enumerate(SPEEDS):
-        for i, c in enumerate(CLASSES):
-            ax = axes[i, j]
-            for q, p in enumerate(POLICIES):
-                g = sel[(sel.speed == v) & (sel.policy == p) & (sel["class"] == c)]
-                g = g.set_index("csi").reindex(list(CSI))
-                ax.bar(np.arange(len(CSI)) + (q - 2) * w, g.loss, w, color=colors[p], label=p,
-                       yerr=[g.loss - g.loss_lo, g.loss_hi - g.loss], capsize=1.5)
-            if i == 0:
-                ax.set_title(f"{v:g} m/s")
-            if j == 0:
-                ax.set_ylabel(f"{c} loss")
-            ax.grid(alpha=0.3, axis="y")
-    for ax in axes[-1]:
-        ax.set_xticks(range(len(CSI)), list(CSI))
-        ax.set_xlabel("channel knowledge (delay ms, back-off dB)")
-    axes[0, 0].legend(ncol=5)
-    fig.suptitle(f"Loss under imperfect CSI, load {load}, L={antennas}")
-    fig.tight_layout()
-    fig.savefig(RESULTS / "csi_loss.png", dpi=130)
-    plt.close(fig)
+    # PT-BR plot for academic report
+    plot_csi_fig(sel, lang="pt", out_path="report/figures/csi_loss.png")
+    # EN plot for repository results / README
+    plot_csi_fig(sel, lang="en", out_path=RESULTS / "csi_loss.png")
 
     b = sel[sel["class"] == "voice"].pivot_table(index=["speed", "csi"], columns="policy",
                                                 values="bler")

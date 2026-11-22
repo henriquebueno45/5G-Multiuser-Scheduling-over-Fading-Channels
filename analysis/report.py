@@ -21,6 +21,15 @@ from analysis.stats import boot_ci, paired_ci, sla_capacity  # noqa: E402
 from sim.metrics import jain  # noqa: E402
 
 CLASSES = ["voice", "video", "data"]
+CLASS_TITLES = {"voice": "URLLC", "video": "eMBB GBR", "data": "eMBB non-GBR"}
+POL_TITLES = {
+    "fifo": "FIFO",
+    "fifobuf": "FIFO Tail-Drop",
+    "prio": "Priority",
+    "dwrr": "DWRR",
+    "pf": "PF",
+    "sliced": "Hierarchical",
+}
 METRICS = ["loss", "delay_p95_ms", "jitter_ms", "throughput_mbps", "starved_frac"]
 COLORS = {"fifo": "tab:red", "prio": "tab:blue", "dwrr": "tab:green", "pf": "tab:purple",
           "fifobuf": "tab:orange", "sliced": "tab:cyan"}
@@ -109,7 +118,7 @@ def plot_policies(s: pd.DataFrame, antennas: int, out) -> None:
                 if len(g):
                     _band(ax, g, m, color, p)
             if i == 0:
-                ax.set_title(c)
+                ax.set_title(CLASS_TITLES.get(c, c))
             if j == 0:
                 ax.set_ylabel(m)
             if m == "loss":
@@ -117,9 +126,11 @@ def plot_policies(s: pd.DataFrame, antennas: int, out) -> None:
             ax.grid(alpha=0.3)
     for ax in axes[-1]:
         ax.set_xlabel("offered load (1 = saturation)")
-    axes[0, 0].legend()
-    fig.suptitle(f"Policies, {antennas} antenna(s); mean and 95% bootstrap CI over seeds")
-    fig.tight_layout()
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+               ncol=6, fontsize=9.5, frameon=True, edgecolor="#ccc", facecolor="white")
+    fig.suptitle(f"Policies, {antennas} antenna(s); mean and 95% bootstrap CI over seeds", y=1.0)
     fig.savefig(out, dpi=130)
     plt.close(fig)
 
@@ -137,16 +148,18 @@ def plot_diversity(s: pd.DataFrame, out) -> None:
                 if len(g):
                     _band(ax, g, "loss", cmap.get(k, "k"), f"L={k}")
             if i == 0:
-                ax.set_title(p)
+                ax.set_title(POL_TITLES.get(p, p), fontweight="bold")
             if j == 0:
-                ax.set_ylabel(f"{c} loss")
+                ax.set_ylabel(f"{CLASS_TITLES.get(c, c)} Loss")
             ax.axhline(0.01, color="gray", ls=":", lw=1)
             ax.grid(alpha=0.3)
     for ax in axes[-1]:
-        ax.set_xlabel("offered load")
-    axes[0, 0].legend()
-    fig.suptitle("Effect of receive antenna diversity on loss")
-    fig.tight_layout()
+        ax.set_xlabel("Offered Load")
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+               ncol=3, fontsize=9.5, frameon=True, edgecolor="#ccc", facecolor="white")
+    fig.suptitle("Effect of receive antenna diversity on loss", y=1.0)
     fig.savefig(out, dpi=130)
     plt.close(fig)
 
@@ -164,13 +177,15 @@ def plot_edge(e: pd.DataFrame, load: float, antennas: int, out) -> None:
             ax.bar(x, g.loss, w, color=color, label=z,
                    yerr=[g.loss - g.lo, g.hi - g.loss], capsize=2)
         ax.set_xticks(range(len(pols)), pols)
-        ax.set_title(c)
+        ax.set_title(CLASS_TITLES.get(c, c))
         ax.grid(alpha=0.3, axis="y")
     axes[0].set_ylabel("loss")
-    axes[0].legend()
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+               ncol=2, fontsize=9.5, frameon=True, edgecolor="#ccc", facecolor="white")
     fig.suptitle(f"Cell-centre (<{CENTRE_M:.0f} m) vs cell-edge (>{EDGE_M:.0f} m), "
-                 f"load {load}, L={antennas}")
-    fig.tight_layout()
+                 f"load {load}, L={antennas}", y=1.0)
     fig.savefig(out, dpi=130)
     plt.close(fig)
 

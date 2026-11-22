@@ -86,6 +86,7 @@ def report(load: float) -> None:
     w = 0.16
     colors = {"fifo": "tab:red", "fifobuf": "tab:orange", "prio": "tab:blue",
               "dwrr": "tab:green", "pf": "tab:purple"}
+    class_labels = {"voice": "URLLC", "video": "eMBB GBR", "data": "eMBB non-GBR"}
     for ax, c in zip(axes, CLASSES):
         for i, p in enumerate(POLICIES):
             vals, err = [], []
@@ -98,12 +99,14 @@ def report(load: float) -> None:
                 err.append([r.loss - r.lo, r.hi - r.loss])
             ax.bar(np.arange(len(names)) + (i - 2) * w, vals, w, color=colors[p], label=p,
                    yerr=np.array(err).T, capsize=1.5)
-        ax.set_ylabel(f"{c} loss")
+        ax.set_ylabel(f"{class_labels.get(c, c)} loss")
         ax.grid(alpha=0.3, axis="y")
     axes[-1].set_xticks(range(len(names)), names, rotation=30, ha="right")
-    axes[0].legend(ncol=5)
-    fig.suptitle(f"Loss at load {load} under changed assumptions (mean, 95% CI over seeds)")
-    fig.tight_layout()
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98),
+               ncol=5, fontsize=9.5, frameon=True, edgecolor="#ccc", facecolor="white")
+    fig.suptitle(f"Loss at load {load} under changed assumptions (mean, 95% CI over seeds)", y=1.0)
     fig.savefig(RESULTS / "sens_loss.png", dpi=130)
     plt.close(fig)
     piv = s.pivot_table(index=["variant", "class"], columns="policy", values="loss").round(3)

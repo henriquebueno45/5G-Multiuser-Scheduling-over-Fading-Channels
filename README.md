@@ -1,10 +1,10 @@
 # Multi-User 5G Scheduling over Fading Channels
 
-Simulation of a 5G base station serving several users with different channel qualities. Each user's rate comes from the channel capacity (path loss, shadowing, small-scale fading, optional MRC antenna diversity), and traffic classes (voice, video, data) are served with different scheduling policies under increasing load. The study measures delay, jitter, packet loss, throughput, and starvation per class and per user.
+Simulation of a 5G base station (gNB) downlink serving multiple network slices with heterogeneous 3GPP QoS requirements (URLLC, eMBB GBR, and eMBB non-GBR). Each user's physical rate is modeled through log-distance path loss, static log-normal shadowing, correlated Jakes Rayleigh fading, and optional MRC receive antenna diversity. Under increasing offered load ($\rho \in [0.2, 3.0]$), classical flat scheduling policies (FIFO, strict priority, DWRR, proportional fair) are benchmarked against a **5G Hierarchical Slice Scheduler** (`sliced`). The study evaluates packet loss (PDB deadline violations), tail latency ($D_{p95}$), jitter, goodput, starvation, and Jain's fairness index.
 
 Course project for Wireless Communications (UFSC).
 
-**Status:** simulator, experiments (policy x load x antenna diversity, 30 seeds), sensitivity study, imperfect-CSI study and tests are done. The article (Portuguese, 6 pages) is in `report/`; still to do: theory comparisons (multiuser diversity, M/G/1 priority queue). Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
+**Status:** Simulator, Monte Carlo experiments (6 policies $\times$ 13 loads $\times$ 3 antenna configs $\times$ 30 seeds = 7,020 runs), sensitivity sweep, imperfect-CSI study, and full test suite (33 passing unit tests) are complete. The final article (Portuguese, strictly 6 pages in ABNT `abntex2` format) is located in `report/main.pdf` (and ready for Overleaf in `report/overleaf_project.zip`). Plan and roadmap: [docs/PLAN.md](docs/PLAN.md).
 
 ## Reused from the Single-User Project
 
@@ -17,7 +17,7 @@ The channel model, its validation, and the statistics helpers come from [Traffic
 | `analysis/stats.py` | `boot_ci`, `paired_ci`, `sla_capacity` from `analysis/exp_report.py` |
 | `channel/calibration.py` | `equal_mean_distance` from `analysis/experiments.py` |
 
-The channel is validated against theory (outage probability follows Gamma(L, 1) within 0.02 decades for P > 1e-3; level-crossing rate within 2% of Clarke's formula): see `results/outage_validation.png` and `results/channel_validation.png`. The real-time C/Pthreads core from the original project is deliberately not reused.
+The channel is validated against theory (outage probability follows Gamma(L, 1) within 0.02 decades for P > 1e-3; level-crossing rate within 2% of Clarke's formula): see `results/outage_validation.png` and `results/channel_validation.png`.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ flowchart LR
     subgraph WORLD["1. Environment Setup (Offline)"]
         direction TB
         CH["Channel & Cell (channel/, cell/)<br/>Path loss, fading, MRC diversity<br/>→ per-user bits/PRB traces"]
-        TRAF["Traffic Model (sim/traffic.py)<br/>Voice, video & data arrivals<br/>→ scaled to offered load"]
+        TRAF["Traffic Model (sim/traffic.py)<br/>URLLC, eMBB GBR, eMBB non-GBR<br/>→ scaled to offered load"]
     end
 
     subgraph SIM["2. Slotted Simulation (1 ms loop - sim/)"]
@@ -66,123 +66,141 @@ flowchart LR
     class REP out
 ```
 
-Reading the diagram:
-1. **Offline Environment Setup:** The **channel model** (`channel/`) and **cell** (`cell/`) compute user positions (20–300 m) and each user's per-slot physical rate (`bits_per_prb`) from path loss, shadowing, fading, and optional MRC diversity. In parallel, the **traffic model** (`sim/traffic.py`) generates packet arrivals for voice, video, and data, scaled so that load 1.0 saturates the cell's 50 PRBs at mean rates. Generating traces offline guarantees that all policies are benchmarked on identical realizations.
-2. **1 ms Slotted MAC Simulation:** In every 1 ms slot, the **slot engine** (`sim/engine.py`) enqueues arrivals, drops head-of-line packets that miss their deadline (or overflow the optional shared buffer), and asks the **scheduling policy** (`sim/policies.py`: FIFO, Priority, DWRR, PF) how to allocate the 50 PRBs. The engine serves queues, fragmenting packets across slots. With imperfect CSI enabled, a transmission fails (PRBs wasted, bits remain queued) when the true channel rate is lower than the delayed/backed-off estimate.
-3. **Analysis & Reports:** After discarding warmup (1,000 slots) and tail (500 slots), the **metrics** module (`sim/metrics.py`) computes loss, delay, jitter, throughput, starvation, and fairness. Multi-run sweeps (`analysis/`) aggregate results across loads and seeds into CSV files, which the **report** generator turns into bootstrap confidence intervals, paired comparisons, and publication figures in `results/`.
+### Reading the diagram:
+1. **Offline Environment Setup:** The **channel model** (`channel/`) and **cell** (`cell/`) compute user positions (uniform 20–300 m annulus) and each user's per-slot physical transmission rate (`bits_per_prb`) from log-distance path loss, 6 dB log-normal shadowing, Jakes fading (32 sinusoids, Doppler spread $f_d$), and optional MRC diversity. In parallel, the **traffic model** (`sim/traffic.py`) instantiates arrivals mapped to 3GPP profiles:
+   - **URLLC (SST 2, 5QI 82/84):** Periodic 1,600 bits every 20 ms, Packet Delay Budget (PDB) = 20 ms.
+   - **eMBB GBR (SST 1, 5QI 2/3):** Periodic 66,000 bits every 33 ms, PDB = 50 ms.
+   - **eMBB non-GBR (SST 1, 5QI 8/9):** Poisson 2 Mbit/s (12,000 bit packets), PDB = 500 ms.
+2. **1 ms Slotted MAC Simulation:** In every 1 ms slot, the **slot engine** (`sim/engine.py`) enqueues arrivals, drops head-of-line packets that violate their PDB deadline (or tail drops on buffer overflow), and invokes the **scheduling policy** (`sim/policies.py`) to distribute the 50 PRB budget. Under imperfect CSI, transmissions fail (BLER, PRBs wasted, bits stay queued) if the true channel rate is below the delayed CQI estimate.
+3. **Analysis & Reports:** After discarding warmup (1,000 slots) and tail (500 slots), multi-run sweeps (`analysis/`) compute metrics with 95% bootstrap confidence intervals and paired comparisons, generating publication-ready figures and summary CSVs in `results/` and `report/figures/`.
 
-### Technical description
+---
 
-The simulator is a slotted (1 ms) discrete-time model of one gNB downlink, in four layers that only depend downwards. A run is fully determined by `(policy, load, seed, antennas, ...)`.
+## Technical Description
 
-1. **Channel layer** (`channel/channel_model.py`, reused from the single-user project). For one user it generates the spectral efficiency per PRB over time: log-distance path loss, static log-normal shadowing, Rayleigh fading from a sum-of-sinusoids Jakes model (32 paths, Doppler from the speed) and MRC over `L` antennas (a Gamma(`L`, 1) gain). The result is `min(log2(1 + SNR), 7.4)`.
-2. **Cell layer** (`cell/cell.py`). `generate_cell` draws the user positions (uniform in area over a 20–300 m annulus) and one channel per user, each from its own `SeedSequence.spawn` stream so that a user's channel does not depend on how many other users exist. It returns a `CellRealization` with `bits_per_prb[user, slot]` (SE × 360 kHz × 1 ms), the SE and the distances.
-3. **Simulation layer** (`sim/`).
-   - `traffic.py` builds per-user packet arrivals (voice and video periodic, data Poisson) and a *saturation scale* so that load 1 fills the 50 PRBs at the realisation's mean rates.
-   - `engine.run` is the slot loop. Each slot it (i) enqueues arrivals (tail drop if a shared buffer is set), (ii) drops head-of-line packets past their deadline, (iii) builds a `SlotState` (backlog, head-of-line arrival, bits per PRB, class) and asks the policy for a PRB allocation, (iv) serves each user's queue, fragmenting packets across slots, and (v) records the PRBs per class and the backlog. With `rate_est` set, the policy and the transmitter use the estimated rate and a transmission fails (PRBs wasted, bits stay queued) when the true rate is lower.
-   - `policies.py` defines the `Policy` interface (`allocate`, `update`) and its implementations (FIFO, Strict Priority, DWRR, Proportional Fair, and the 5G Hierarchical Slice Scheduler `sliced`). A new policy only needs to implement `allocate` and be added to the `POLICIES` registry; the engine never looks inside it.
-   - `run.simulate` wires it all together, builds `rate_est` from a delayed SE and a back-off, and holds the variant registry (`fifobuf`), the DWRR weights, deadline and buffer overrides and the CLI.
-   - `metrics.py` turns the `SimResult` into per-class and per-user tables (the first 1,000 and last 500 slots are excluded).
-4. **Experiment layer** (`analysis/`). `experiments.py`, `sensitivity.py` and `csi.py` are resumable sweeps over a `multiprocessing.Pool`: every `(configuration, seed)` job is independent and appends its rows to a CSV, keyed so completed jobs are skipped on restart. `report.py` and `stats.py` read the CSVs and produce bootstrap confidence intervals, paired differences, SLA capacity, edge/centre and fairness tables and the plots in `results/`.
+The simulator is a slotted (1 ms) discrete-time model of one gNB downlink in 3.5 GHz ($B = 360$ kHz per PRB, $\mu=1$ numerology subframe equivalent):
 
-Design choices: all randomness derives from the seed (runs are reproducible and policies are compared on identical channels and traffic, which makes the paired differences valid); the channel and the engine are decoupled by the `bits_per_prb` array, so another channel model can be plugged in without touching the scheduler; and the tests (`tests/`) check each layer separately (channel statistics, link budget, policy invariants, an exact queue recursion, the saturation bound).
+1. **Channel layer** (`channel/channel_model.py`): Log-distance path loss ($n = 3.5$), static log-normal shadowing ($\sigma = 6$ dB), Jakes sum-of-sinusoids fading (32 paths), and MRC over $L \in \{1, 2, 4\}$ antennas resulting in $\mathrm{Gamma}(L, 1)$ power gain. Truncated Shannon spectral efficiency $\mathrm{SE}_u[t] = \min\{\log_2(1 + \gamma_u[t]), 7.4\}$ bit/s/Hz (256-QAM ceiling).
+2. **Cell layer** (`cell/cell.py`): Positions 10 users ($r_u \in [20, 300]$ m) using independent `SeedSequence.spawn` streams for perfect paired evaluation.
+3. **Simulation layer** (`sim/`):
+   - `traffic.py`: Synthesizes arrivals and computes the cell saturation scale $s$ such that $\rho = 1.0$ matches the aggregate Shannon capacity across the 50 PRBs.
+   - `engine.py`: 1 ms discrete-event slot loop with work-conserving PRB allocation, packet fragmentation, and SLA deadline enforcement.
+   - `policies.py`: Implements the scheduling policies:
+     - `fifo`: First-In First-Out by packet arrival timestamp.
+     - `prio`: Strict Priority ($\mathcal{U}_{\mathrm{URLLC}} \succ \mathcal{U}_{\mathrm{video}} \succ \mathcal{U}_{\mathrm{data}}$).
+     - `dwrr`: Deficit Weighted Round Robin with class quanta 8:4:2 PRBs and intra-slice FIFO.
+     - `pf`: Class-blind Proportional Fair ($\arg\max_u r_u[t] / \bar{R}_u[t]$ with exponential filter $\beta=0.01$).
+     - `sliced` (**Hierarchical Slicing**): Two-tier scheduler. **Tier 1 (Inter-slice):** DWRR across slices (weights 8:4:2) ensuring strict SLA isolation, minimum guaranteed quotas, and dynamic work-conserving sharing of unused PRBs. **Tier 2 (Intra-slice):** Urgency-first (oldest deadline) for URLLC; intra-slice Proportional Fair ($\arg\max_{u \in \text{slice}} r_u / \bar{R}_u$) for eMBB GBR and eMBB non-GBR to exploit multiuser diversity.
+4. **Experiment layer** (`analysis/`): Multiprocessing sweeps (`experiments.py`, `csi.py`, `sensitivity.py`), statistical bootstrap reporting (`report.py`), and publication figure generation (`article_figs.py`).
 
-## Results
+---
 
-Setup: one cell with 50 PRBs (360 kHz, 1 ms slots), 10 users uniform over 20-300 m (4 voice, 3 video, 3 data), Rayleigh fading with 1.5 m/s mobility, 10 s per run, 30 seeds, 95% bootstrap intervals (loads 0.2 to 3.0). **Load 1 is the point where the offered bits would use every PRB** at each user's mean rate. A packet that cannot meet its deadline (voice 20 ms, video 50 ms, data 500 ms) is dropped. Policies: FIFO (oldest packet first, deadline drops only), FIFO with a 20 ms shared tail-drop buffer (`fifobuf`), strict priority (`prio`), DWRR with weights 8/4/2 (`dwrr`), and class-blind proportional fair (`pf`). Single receive antenna unless stated.
+## Results and Findings
 
-### Who wins and who loses under congestion
+Setup: 50 PRBs, 10 users (4 URLLC, 3 eMBB GBR, 3 eMBB non-GBR), pedestrian speed 1.5 m/s ($f_d = 17.5$ Hz), 30 seeds per load (loads 0.2 to 3.0), 95% bootstrap confidence intervals.
 
-Packet loss at load 1.2 (the cell is 20% overloaded), one antenna:
+### Who Wins and Who Loses Under Congestion ($\rho = 1.2$, Overload of 20%, $L = 1$)
 
-| Class | FIFO | FIFO + buffer | Priority | DWRR 8/4/2 | PF |
-|---|---|---|---|---|---|
-| Voice | 99.6% | 76.9% | 0.1% | 0.1% | 0.4% |
-| Video | 67.0% | 52.4% | 5.0% | 17.4% | 14.7% |
-| Data | 0.3% | 12.5% | 68.1% | 46.1% | 6.5% |
+| Metric / Slice | FIFO | FIFO Tail-Drop | Priority (`prio`) | DWRR (`dwrr`) | PF (`pf`) | Hierarchical (`sliced`) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **URLLC Loss** | 99.6% | 76.9% | 0.1% | 0.1% | 0.4% | **0.1%** |
+| **eMBB GBR Loss** | 67.0% | 52.4% | 5.0% | 17.4% | 14.7% | **10.1%** |
+| **eMBB non-GBR Loss** | 0.3% | 12.5% | 68.1% | 46.1% | 6.5% | **18.9%** |
+| **URLLC Tail Latency ($D_{p95}$)** | 18.7 ms | 20.0 ms | 2.4 ms | 3.6 ms | 2.3 ms | **3.5 ms** |
+| **eMBB GBR Tail Latency ($D_{p95}$)** | 49.7 ms | 44.6 ms | 34.2 ms | 42.4 ms | 39.0 ms | **37.0 ms** |
+| **non-GBR Starvation (% time)** | 31.2% | 36.8% | **72.9%** | 0.0% | 36.0% | **0.0%** |
+| **non-GBR Throughput** | 25.1 Mbps | 21.9 Mbps | 8.4 Mbps | 12.0 Mbps | 23.3 Mbps | **19.6 Mbps** |
+| **Jain's Fairness Index ($J$)** | 0.46 | 0.72 | 0.85 | 0.90 | 0.97 | **0.96** |
 
-![Policies, 1 antenna](results/main_policies_L1.png)
+![Packet Loss vs Offered Load](results/art_loss.png)
 
-- **Class-blind FIFO sacrifices the most delay-sensitive traffic.** Older data always sits ahead of new voice packets, and under fading a user in a deep fade needs many PRBs and blocks everyone behind it. Even at load 0.4 FIFO loses voice, which strict priority and DWRR do not.
-- **Strict priority** keeps voice and video alive and moves the loss to data, which is starved 73% of the time at load 1.2.
-- **DWRR** never starves data (0% starvation), at the price of more video loss than priority. Its behaviour is set by its weights (see sensitivity).
-- **PF** has the best overall fairness but no class guarantees; its voice protection comes from favouring good channels, not from class awareness.
+### Key Insights:
+- **Failure of Flat Schedulers:**
+  - **FIFO** causes catastrophic failure for URLLC (**99.6% drop rate**) due to *head-of-line blocking* by elastic data packets.
+  - **Strict Priority** protects URLLC and video but suffocates the data slice (**72.9% starvation**, 68.1% loss, Jain index drops to 0.85).
+  - **DWRR** eliminates starvation (0%) but suffers 46.1% data loss because intra-slice FIFO serves users blindly during deep fades.
+  - **Proportional Fair** maximizes aggregated throughput but lacks deterministic latency bounds.
+- **Protagonist Role of Hierarchical Slicing (`sliced`):**
+  - Combines inter-slice isolation with intra-slice multiuser diversity.
+  - Slashes non-GBR data loss from 46.1% (DWRR) down to **18.9%** (a paired reduction of $-27.2$ pp, $p < 0.01$) and boosts throughput by **+64%** (12.0 $\to$ 19.6 Mbps).
+  - Lowers video loss from 17.4% to **10.1%** ($-7.4$ pp, $p < 0.01$).
+  - Strictly preserves URLLC ($D_{p95} = 3.5\text{ ms} \ll 20\text{ ms}$, loss = 0.1%).
+  - Maintains **0.0% starvation** and achieves near-optimal system fairness (**$J = 0.96$**).
 
-Priority over FIFO at load 1.2, paired over seeds: voice -99.6 percentage points [-99.9, -98.9], video -62 [-70, -54], data +68 [+62, +74].
+---
 
-### Load each class can carry (>= 99% delivered)
+### SLA Capacity Target ($\ge 99\%$ Delivered within PDB, $L = 1$)
 
-Highest load at which the class still delivers 99% of its packets, one antenna. Voice values for priority, DWRR and PF are lower bounds: most seeds never violate the 99% target up to the highest simulated load, 3.0.
+Highest load $\rho$ at which the slice delivers at least 99% of its packets within its PDB:
 
-| Class | FIFO | FIFO + buffer | Priority | DWRR | PF |
-|---|---|---|---|---|---|
-| Voice | 0.30 | 0.30 | >= 2.91 | >= 2.82 | >= 2.59 |
-| Video | 0.57 | 0.54 | 1.21 | 0.92 | 0.82 |
-| Data | 1.90 | 0.80 | 0.73 | 0.92 | 1.36 |
+| Slice / 3GPP Profile | FIFO | FIFO Tail-Drop | Priority | DWRR | PF | Hierarchical (`sliced`) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **URLLC (5QI 82/84)** | 0.30 | 0.30 | $\ge 2.91$ | $\ge 2.82$ | $\ge 2.59$ | $\mathbf{\ge 2.82}$ |
+| **eMBB GBR (5QI 2/3)** | 0.57 | 0.54 | 1.21 | 0.92 | 0.82 | **0.92** |
+| **eMBB non-GBR (5QI 8/9)** | 1.90 | 0.80 | 0.73 | 0.92 | 1.36 | **1.06** |
 
-### Antenna diversity
+The hierarchical scheduler elevates non-GBR SLA capacity from $\rho = 0.92$ to **$\rho = 1.06$** (+15%) without degrading the capacity of priority slices.
 
-![Effect of diversity](results/main_diversity.png)
+---
 
-More receive antennas (MRC, L = 1, 2, 4) raise the load that voice and video can carry under every policy. Video capacity under priority goes from 1.21 to 1.75, and under FIFO from 0.57 to 0.93; voice under FIFO from 0.30 to 0.80. Diversity helps most the classes that were being hurt by deep fades. An exception is PF, which gets *worse* for video and data with more antennas (video loss at load 1.2 goes from 14.7% to 26.4%, and its data capacity falls from 1.36 to about 1.1), because diversity flattens the fading peaks that PF exploits.
+### Antenna Diversity and Channel Hardening
 
-### Cell centre versus cell edge
+![Antenna Diversity](results/main_diversity.png)
 
-![Cell centre versus cell edge](results/main_edge_centre.png)
+More receive antennas ($L \in \{1, 2, 4\}$ with MRC) substantially increase URLLC and video capacity across all policies. However, under flat Proportional Fair, higher diversity flattens the Rayleigh fading variance (*channel hardening*), diminishing the opportunistic peaks that PF exploits: video loss under PF at $\rho = 1.2$ rises from 14.7% ($L=1$) to 26.4% ($L=4$). Hierarchical slicing avoids this degradation by guaranteeing minimum PRB shares per slice.
 
-At load 1.2, edge users (> 200 m) lose far more than centre users (< 100 m) under channel-aware policies: PF video loss is 27% at the edge and 2% in the centre, DWRR video 26% against 8%. Priority is the most even (video 8% against 1%, voice below 0.2% everywhere). Per-user fairness (Jain index of delivered fractions) at load 1.2: PF 0.97, DWRR 0.90, priority 0.85, FIFO + buffer 0.72, FIFO 0.46. PF is "fair" because it spreads loss evenly across classes, which is not the same as protecting voice.
+---
 
-### How robust are these conclusions?
-
-![Sensitivity](results/sens_loss.png)
-
-One assumption was changed at a time (data deadline 100 ms / 2000 ms, voice deadline 50 ms, user mix 6/2/2 and 2/4/4, DWRR weights, FIFO buffer), 20 seeds, load 1.2.
-
-- **Robust:** the policy ranking never changes. Priority, DWRR and PF keep voice loss at or below 0.6% in every variant; FIFO loses 98% or more of voice in all but the variant that relaxes the voice deadline to 50 ms (37%).
-- **FIFO has no good operating point.** Shrinking its buffer to 5 ms protects voice (14% loss) but loses 78% of video and 21% of data; a 100 ms buffer loses 99% of voice. A single FIFO number would be misleading, so both variants are reported.
-- **DWRR is a dial, not a single result.** With weights 16/4/1 data loses 57% and video 9.5%; with equal weights video loses 35% and data 27%.
-
-### Do the conclusions survive imperfect channel knowledge?
+### Impact of Stale CSI and Mobility
 
 ![Imperfect CSI](results/csi_loss.png)
 
-The base station is given a CQI report that is 5 or 10 ms old and transmits at that rate minus a back-off (0, 3 or 6 dB). If the true channel is worse, the transmission fails: the PRBs are wasted and the data is sent again. 20 seeds, speeds 1.5 and 15 m/s, loads 0.8 and 1.2, 1 and 4 antennas (`analysis/csi.py`).
+Evaluating delayed CQI reports ($d \in \{5, 10\}$ ms) and link-adaptation back-off margins ($\beta \in \{0, 3, 6\}$ dB) at pedestrian (1.5 m/s) and vehicular (15 m/s) speeds:
+- At 15 m/s ($f_d = 175$ Hz), coherence time falls to $T_c \approx 2.4$ ms, making 5 ms CQI reports completely stale.
+- Flat Proportional Fair suffers catastrophic degradation: it schedules users based on outdated fading peaks, driving BLER up to 70% and video loss to 78% (52% with $\beta = 3$ dB back-off).
+- In contrast, **Hierarchical Slicing** isolates classes via inter-slice DWRR quotas, preventing stale-CSI retries in one slice from cannibalizing others. At 15 m/s with $\beta = 3$ dB back-off, Hierarchical Slicing restricts video loss to **36.8%** (a 15.2 pp advantage over flat PF) while strictly guaranteeing URLLC loss at **0.2%** (avoiding the near-100% collapse seen in FIFO variants).
 
-- **Policy ranking survives.** Priority, DWRR and PF still protect voice (below about 11% loss at load 1.2, below 2% with a 3 dB back-off); FIFO and FIFO with a buffer still lose almost all voice. Priority is still the best for video and still starves data (97-99% loss).
-- **Everything loses capacity.** At load 0.8 with a 5 ms delay and 3 dB back-off, video loss at 1.5 m/s goes from 3% to 31% (DWRR) and 17% (priority) and data loss from about 0% to 55% (DWRR) and 87% (priority), so load 0.8 is no longer below capacity.
-- **PF is the most sensitive to speed.** It picks users at their fading peaks, which a stale report overestimates: its block error rate is 0.32-0.71 at 15 m/s against 0.19 for the others, and its video loss at load 0.8 is 52% (priority: 26%).
-- **A moderate back-off is best.** At 1.5 m/s 3 dB beats 6 dB and 0 dB.
-- This model is harsher than a real link (no outer-loop adaptation to a 10% error target, no HARQ combining); read it as the direction of the effect, not its size.
-
-### Limitations
-
-- The traffic mix, deadlines and DWRR weights are modelling choices, not measured values; the sensitivity study shows which results depend on them.
-- Load 1 is relative to each seed's realisation, so it varies slightly between seeds.
-- Service spent on a packet that then misses its deadline is wasted, so goodput under overload is below the cell capacity.
-- Voice capacity of the protected policies is censored at load 3.0 (it is a lower bound, because voice is a small share of the total traffic).
-
-Raw outputs: `results/main_*.csv` (summary, paired differences, capacity, edge/centre, fairness) and `results/sens_*.csv`.
+---
 
 ## Quick Start
 
 ```bash
+# 1. Environment setup
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest -q tests
-python -m analysis.validate_channel   # regenerates the validation plots
-python -m sim.run --policy prio --load 1.3 --seed 1   # one multi-user run: per-class and per-user metrics
+
+# 2. Run test suite (33 unit tests)
+PYTHONPATH=. pytest -q tests
+
+# 3. Single-run simulation example
+PYTHONPATH=. python -m sim.run --policy sliced --load 1.2 --seed 1
+
+# 4. Regenerate channel theoretical validation plots
+PYTHONPATH=. python -m analysis.validate_channel
 ```
 
-### Reproducing the results
+### Reproducing Full Benchmark and Figures
 
 ```bash
-python -m analysis.experiments --name main --seeds 30 --workers 6   # about 15 min, resumable
-python -m analysis.report --name main                                # tables and plots
-python -m analysis.sensitivity run --seeds 20 --workers 6            # about 15 min, resumable
-python -m analysis.sensitivity report
-python -m analysis.csi run --seeds 20 --workers 6                    # about 25 min, resumable
-python -m analysis.csi report --load 1.2 --antennas 1                # also try --load 0.8
+# Monte Carlo sweep (7,020 runs across 6 policies, 13 loads, 3 antenna configs, 30 seeds)
+PYTHONPATH=. python -m analysis.experiments --name main --seeds 30 --workers 6
+
+# Compute bootstrap CIs, paired differences, SLA capacity, and generate results/*.png
+PYTHONPATH=. python -m analysis.report --name main
+
+# Generate publication 3-panel figure with clear top legend
+PYTHONPATH=. python -m analysis.article_figs
+
+# Imperfect CSI study
+PYTHONPATH=. python -m analysis.csi run --seeds 20 --workers 6
+PYTHONPATH=. python -m analysis.csi report --load 0.8 --antennas 1
 ```
+
+## Overleaf Article
+
+The complete academic paper formatted in ABNT (`abntex2`, strictly 6 pages in Portuguese) is ready for Overleaf:
+- Source: [report/main.tex](report/main.tex)
+- Ready-to-upload archive: **[report/overleaf_project.zip](report/overleaf_project.zip)** (contains `main.tex`, `references.bib`, and all generated figures in `figures/`).
 
 ## License
 

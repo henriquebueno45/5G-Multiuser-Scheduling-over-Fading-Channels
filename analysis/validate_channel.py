@@ -44,58 +44,79 @@ def validate_outage(n_traces: int = 40, n_slots: int = 50000, speed: float = 15.
     th_db = np.arange(-30, 1.0, 2.0)
     th = 10 ** (th_db / 10)
     rows = ["antennas,threshold_db,sim_outage,theory_outage"]
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10, 3.8))
-    for L in (1, 2, 4):
-        cfg = ChannelConfig(antennas=L, speed_mps=speed)
-        g = np.concatenate([rayleigh_power_gain(n_slots, cfg, np.random.default_rng(100 + k))
-                            for k in range(n_traces)])
-        sim = np.array([(g < t * L).mean() for t in th])
-        thy = stats.gamma.cdf(th * L, a=L)
-        # Threshold is relative to the mean combined gain L, so curves of different L are comparable
-        ax.semilogy(th_db, sim, "o", ms=4, label=f"simulated L={L}")
-        ax.semilogy(th_db, thy, "-", label=f"theory L={L}")
-        rows += [f"{L},{x},{a:.6g},{b:.6g}" for x, a, b in zip(th_db, sim, thy)]
-        # Local slope of log P_out versus log threshold over the same range for simulation and
-        # theory (the asymptotic slope L needs probabilities too small to be sampled)
-        t_branch = np.logspace(-1.5, -0.3, 10) * L
-        emp = np.array([(g < t).mean() for t in t_branch])
-        thy_b = stats.gamma.cdf(t_branch, a=L)
-        ok = emp > 0
-        o_sim = np.polyfit(np.log10(t_branch[ok]), np.log10(emp[ok]), 1)[0]
-        o_thy = np.polyfit(np.log10(t_branch), np.log10(thy_b), 1)[0]
-        n_ok = (thy > 1e-3) & (sim > 0)
-        print(f"L={L}: log-log slope simulated {o_sim:.2f}, theory {o_thy:.2f} over the same range "
-              f"(asymptotic diversity order {L}); max |log10 sim/theory| over P>1e-3 = "
-              f"{np.max(np.abs(np.log10(sim[n_ok] / thy[n_ok]))):.2f}")
-    ax.set_xlabel("outage threshold relative to mean SNR (dB)")
-    ax.set_ylabel("outage probability P(SNR < threshold)")
-    ax.set_ylim(1e-4, 1)
-    ax.grid(alpha=0.3, which="both")
-    ax.legend(fontsize=7)
 
-    # Fine time resolution: at the 1-ms slot rate, deep fades shorter than a slot would be missed
-    speed_lcr, lcr_slots = 5.0, 200000
-    cfg = ChannelConfig(antennas=1, speed_mps=speed_lcr, slot_s=5e-5)
-    fd = speed_lcr * cfg.fc_hz / C
-    rho = np.array([0.1, 0.2, 0.3, 0.5, 0.7, 1.0])
-    g = np.array([rayleigh_power_gain(lcr_slots, cfg, np.random.default_rng(500 + k))
-                  for k in range(20)])
-    dur = lcr_slots * cfg.slot_s
-    sim_lcr = np.array([np.mean([((x[:-1] >= r**2) & (x[1:] < r**2)).sum() / dur for x in g])
-                        for r in rho])
-    thy_lcr = np.sqrt(2 * np.pi) * fd * rho * np.exp(-rho**2)
-    ax2.plot(rho, thy_lcr, "-", label="theory")
-    ax2.plot(rho, sim_lcr, "o", ms=4, label="simulated")
-    ax2.set_xlabel("normalized level rho (amplitude / rms)")
-    ax2.set_ylabel("level-crossing rate (crossings/s)")
-    ax2.set_title(f"Rayleigh L=1, fd = {fd:.0f} Hz", fontsize=9)
-    ax2.grid(alpha=0.3)
-    ax2.legend(fontsize=7)
-    rows += ["", "rho,sim_lcr,theory_lcr"] + [f"{r},{a:.4f},{b:.4f}"
-                                              for r, a, b in zip(rho, sim_lcr, thy_lcr)]
-    print("LCR sim/theory:", np.round(sim_lcr / thy_lcr, 2))
-    fig.tight_layout()
-    fig.savefig(ROOT / "results" / "outage_validation.png", dpi=150)
+    # Generate both PT-BR (for report) and EN (for results/repo)
+    for lang in ("pt", "en"):
+        fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10, 3.8))
+        for L in (1, 2, 4):
+            cfg = ChannelConfig(antennas=L, speed_mps=speed)
+            g = np.concatenate([rayleigh_power_gain(n_slots, cfg, np.random.default_rng(100 + k))
+                                for k in range(n_traces)])
+            sim = np.array([(g < t * L).mean() for t in th])
+            thy = stats.gamma.cdf(th * L, a=L)
+            # Threshold is relative to the mean combined gain L, so curves of different L are comparable
+            sim_label = f"Simulado L={L}" if lang == "pt" else f"simulated L={L}"
+            thy_label = f"Teórico L={L}" if lang == "pt" else f"theory L={L}"
+            ax.semilogy(th_db, sim, "o", ms=4, label=sim_label)
+            ax.semilogy(th_db, thy, "-", label=thy_label)
+            if lang == "en":
+                rows += [f"{L},{x},{a:.6g},{b:.6g}" for x, a, b in zip(th_db, sim, thy)]
+            # Local slope of log P_out versus log threshold over the same range for simulation and
+            # theory (the asymptotic slope L needs probabilities too small to be sampled)
+            t_branch = np.logspace(-1.5, -0.3, 10) * L
+            emp = np.array([(g < t).mean() for t in t_branch])
+            thy_b = stats.gamma.cdf(t_branch, a=L)
+            ok = emp > 0
+            o_sim = np.polyfit(np.log10(t_branch[ok]), np.log10(emp[ok]), 1)[0]
+            o_thy = np.polyfit(np.log10(t_branch), np.log10(thy_b), 1)[0]
+            n_ok = (thy > 1e-3) & (sim > 0)
+            if lang == "en":
+                print(f"L={L}: log-log slope simulated {o_sim:.2f}, theory {o_thy:.2f} over the same range "
+                      f"(asymptotic diversity order {L}); max |log10 sim/theory| over P>1e-3 = "
+                      f"{np.max(np.abs(np.log10(sim[n_ok] / thy[n_ok]))):.2f}")
+        ax.set_xlabel("Limiar de outage relativo à SNR média (dB)" if lang == "pt"
+                      else "outage threshold relative to mean SNR (dB)")
+        ax.set_ylabel("Probabilidade de outage P(SNR < limiar)" if lang == "pt"
+                      else "outage probability P(SNR < threshold)")
+        ax.set_ylim(1e-4, 1)
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(fontsize=7)
+
+        # Fine time resolution: at the 1-ms slot rate, deep fades shorter than a slot would be missed
+        speed_lcr, lcr_slots = 5.0, 200000
+        cfg = ChannelConfig(antennas=1, speed_mps=speed_lcr, slot_s=5e-5)
+        fd = speed_lcr * cfg.fc_hz / C
+        rho = np.array([0.1, 0.2, 0.3, 0.5, 0.7, 1.0])
+        g = np.array([rayleigh_power_gain(lcr_slots, cfg, np.random.default_rng(500 + k))
+                      for k in range(20)])
+        dur = lcr_slots * cfg.slot_s
+        sim_lcr = np.array([np.mean([((x[:-1] >= r**2) & (x[1:] < r**2)).sum() / dur for x in g])
+                            for r in rho])
+        thy_lcr = np.sqrt(2 * np.pi) * fd * rho * np.exp(-rho**2)
+        thy_lcr_label = "Teórico" if lang == "pt" else "theory"
+        sim_lcr_label = "Simulado" if lang == "pt" else "simulated"
+        ax2.plot(rho, thy_lcr, "-", label=thy_lcr_label)
+        ax2.plot(rho, sim_lcr, "o", ms=4, label=sim_lcr_label)
+        ax2.set_xlabel(r"Nível normalizado $\rho$ (amplitude / rms)" if lang == "pt"
+                       else "normalized level rho (amplitude / rms)")
+        ax2.set_ylabel("Taxa de cruzamento de nível (cruzamentos/s)" if lang == "pt"
+                       else "level-crossing rate (crossings/s)")
+        title_lcr = f"Rayleigh L=1, $f_d = {fd:.0f}$ Hz ($v = 5$ m/s)" if lang == "pt" else f"Rayleigh L=1, fd = {fd:.0f} Hz"
+        ax2.set_title(title_lcr, fontsize=9)
+        ax2.grid(alpha=0.3)
+        ax2.legend(fontsize=7)
+        if lang == "en":
+            rows += ["", "rho,sim_lcr,theory_lcr"] + [f"{r},{a:.4f},{b:.4f}"
+                                                      for r, a, b in zip(rho, sim_lcr, thy_lcr)]
+            print("LCR sim/theory:", np.round(sim_lcr / thy_lcr, 2))
+        fig.tight_layout()
+        if lang == "pt":
+            fig.savefig(ROOT / "report" / "figures" / "outage_validation.png", dpi=150)
+            print("saved to report/figures/outage_validation.png")
+        else:
+            fig.savefig(ROOT / "results" / "outage_validation.png", dpi=150)
+            print("saved to results/outage_validation.png")
+        plt.close(fig)
     (ROOT / "results" / "outage_validation.csv").write_text("\n".join(rows) + "\n")
     print("saved to results/outage_validation.png and .csv")
 
