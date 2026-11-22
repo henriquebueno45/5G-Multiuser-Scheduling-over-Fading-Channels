@@ -22,46 +22,54 @@ The channel is validated against theory (outage probability follows Gamma(L, 1) 
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph L1["Channel layer"]
-        CH["channel/channel_model.py<br/>path loss + shadowing + Jakes fading + MRC → SE per PRB"]
-    end
-    subgraph L2["Cell layer: cell/cell.py"]
-        PL["place_users<br/>annulus 20–300 m"]
-        GC["generate_cell<br/>bits_per_prb[user, slot], per-user RNG streams"]
-    end
-    subgraph L3["Simulation layer: sim/"]
-        TR["traffic.py<br/>voice / video / data arrivals, saturation scale"]
-        CSI["run.py: simulate()<br/>optional CQI delay + back-off → rate_est"]
-        ENG["engine.py: run()<br/>slot loop: arrivals → deadline drops → allocate → serve"]
-        POL["policies.py<br/>FIFO · fifobuf · Priority · DWRR · PF"]
-        MET["metrics.py<br/>loss, delay p95, jitter, throughput, starvation, Jain"]
-    end
-    subgraph L4["Experiment layer: analysis/"]
-        EXP["experiments.py<br/>policy × load × antennas × seed sweep"]
-        SENS["sensitivity.py<br/>one assumption at a time"]
-        CSIS["csi.py<br/>delay × back-off × speed"]
-        REP["report.py · stats.py<br/>bootstrap CIs, paired diffs, capacity, plots"]
-    end
-    OUT[("results/*.csv, *.png")]
+flowchart LR
+    IN[/"Inputs<br/>policy, load, seed,<br/>antennas, speed"/]
 
-    CH --> GC
-    PL --> GC
-    GC -- "true rates" --> ENG
-    GC -- "SE history" --> CSI
-    CSI -- "rate_est" --> ENG
-    TR -- "packets" --> ENG
-    ENG <-- "allocate(n_prbs, SlotState) / update(served)" --> POL
-    ENG -- "SimResult" --> MET
-    MET --> EXP
-    MET --> SENS
-    MET --> CSIS
-    EXP --> OUT
-    SENS --> OUT
-    CSIS --> OUT
-    OUT --> REP
-    REP --> OUT
+    subgraph WORLD["1. Build the world"]
+        direction TB
+        CH(["Channel model<br/>path loss, shadowing,<br/>fading, MRC"])
+        CELL["Cell<br/>user positions and<br/>rate per user and slot"]
+        TRAF["Traffic<br/>voice, video, data<br/>packet arrivals"]
+        CH --> CELL
+    end
+
+    subgraph SIM["2. Simulate, 1 ms slots"]
+        direction TB
+        ENG["Slot engine<br/>arrivals, deadline drops,<br/>serve queues"]
+        POL{{"Scheduling policy<br/>FIFO, Priority,<br/>DWRR, PF"}}
+        ENG -- "backlog, rates" --> POL
+        POL -- "PRBs per user" --> ENG
+    end
+
+    CSI[/"Optional: delayed CQI<br/>and back-off"/]
+    MET["Metrics<br/>loss, delay, jitter,<br/>throughput, fairness"]
+
+    subgraph STUDY["3. Study"]
+        direction TB
+        SWEEP["Sweeps<br/>load, antennas, seeds,<br/>sensitivity, CSI"]
+        DB[("results/*.csv")]
+        REP>"Report<br/>CIs, tables, plots"]
+        SWEEP --> DB --> REP
+    end
+
+    IN --> CH
+    IN --> TRAF
+    CELL -- "true rates" --> ENG
+    CELL -.-> CSI -.-> ENG
+    TRAF -- "packets" --> ENG
+    ENG --> MET --> SWEEP
+
+    classDef input fill:#fff3cd,stroke:#b8860b,color:#000
+    classDef core fill:#d6e9ff,stroke:#2f6eb5,color:#000
+    classDef policy fill:#e3d7ff,stroke:#6a4bb5,color:#000
+    classDef out fill:#d9f2d9,stroke:#2e8b57,color:#000
+    class IN,CSI input
+    class CH,CELL,TRAF,ENG,MET,SWEEP core
+    class POL policy
+    class DB,REP out
 ```
+
+Reading the diagram: the **channel model** and **cell** produce the rate each user gets in every slot, and the **traffic** block produces the packets. The **slot engine** repeats every millisecond: it asks the **scheduling policy** how to share the 50 PRBs and serves the queues. The dashed path is the optional imperfect-CSI model, which gives the engine a stale rate estimate instead of the true one. The **metrics** of each run feed the **sweeps**, which store everything in CSV files that the **report** turns into confidence intervals, tables and plots.
 
 ### Technical description
 
